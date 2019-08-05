@@ -1,6 +1,6 @@
 # hello world!
 
-```
+```C++
 #include <iostream>
 
 int main()
