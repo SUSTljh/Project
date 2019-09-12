@@ -14,7 +14,8 @@
 
 #define CLIENT_BACKUP_DIR "backup"
 #define CLIENT_BACKUP_INFO_FILE "backup.list"
-#define RANGE_MAX_SIZE  (10<<20)
+#define BACKUP_URI "/list/"
+#define RANGE_MAX_SIZE  (1<<20)
 #define SERVER_IP "49.234.186.244"
 #define POST 9000
 
@@ -27,7 +28,7 @@ private:
 	int64_t _rang_start;
 	int64_t _rang_len;
 public:
-	bool _res;
+	bool _res = true;
 public:
 	ThrBackUp(const std::string &file,int64_t start,int64_t len)
 		:_file(file)
@@ -40,6 +41,7 @@ public:
 		std::ifstream path(_file,std::ios::binary);
 		if (!path.is_open())
 		{
+			std::cout << "文件打开失败" << std::endl;
 			_res = false;
 			return;
 		}
@@ -57,20 +59,23 @@ public:
 
 		//上传文件分块数据
 		bf::path filename(_file);
-		std::string url = CLIENT_BACKUP_DIR + filename.filename().string();
+		std::cout << "上传文件：" << filename ;
+		std::string url = BACKUP_URI + filename.filename().string();
+		//std::cout << " url : " << url << std::endl;
 		httplib::Client cli(SERVER_IP,POST);
 		httplib::Headers headers;
-		headers.insert(std::make_pair("length:",std::to_string(_rang_len)));
+		headers.insert(std::make_pair("Content-Length:",std::to_string(_rang_len)));
 		std::stringstream tt;
 		tt << "bytes=" << _rang_start << "-" << (_rang_start + _rang_len - 1);
-		headers.insert(std::make_pair("Range", tt.str().c_str()));
+		headers.insert(std::make_pair("Ranger", tt.str().c_str()));
 		auto rsp = cli.Put(&url[0], headers, body, "text/plain");
-		if (rsp && rsp->status != 200)
+		if (rsp->status != 200)
 		{
+			std::cout << "rsp->status != 200" << std::endl;
 			_res = false;
 		}
 		std::stringstream ss;
-		ss << "backup file:" << _file << "range:[ " << _rang_start << " - " << _rang_len << " ]";
+		ss << "backup file: [ " << _file << " ] range:[ " << _rang_start << " - " << _rang_len << " ]";
 		std::cout << ss.str() << std::endl;
 		return;
 	}
@@ -80,6 +85,15 @@ class CloudClient
 {
 private:
 	std::unordered_map<std::string, std::string> _backup_list;
+public:
+	CloudClient()
+	{
+		bf::path file(CLIENT_BACKUP_DIR);
+		if (!bf::exists(file))
+		{
+			bf::create_directory(file);
+		}
+	}
 private:
 	bool GetBackupInfo()
 	{
@@ -87,19 +101,30 @@ private:
 		bf::path path(CLIENT_BACKUP_INFO_FILE);
 		if (!bf::exists(path))
 		{
-			std::cout << "file:" << path.string() << "is not exists" << std::endl;
+			std::cout << "file: " << path.string() << " is not exists" << std::endl;
 			return false;
 		}
 		int64_t fsize = bf::file_size(path);
 		if (fsize == 0)
 		{
-			std::cout << "file :"<< path.string()<<"have no backup" << std::endl;
+			std::cout << " have no backup info" << std::endl;
 			return false;
 		}
 		std::string body;
 		body.resize(fsize);
 		std::ifstream file(CLIENT_BACKUP_INFO_FILE, std::ios::binary);
+		if (!file.is_open())
+		{
+			std::cout << "backup info file open false" << std::endl;
+			return false;
+		}
 		file.read(&body[0],fsize);
+		if (!file.good())
+		{
+			std::cout << "file read false" << std::endl;
+			return false;
+		}
+		file.close();
 		std::vector<std::string> list;
 		boost::split(list,body,boost::is_any_of("\n"));
 		for (auto i : list)
@@ -119,6 +144,7 @@ private:
 	bool SetBackupInfo()
 	{
 		std::string body;
+		std::cout << "设置备份信息" << std::endl;
 		for (auto i : _backup_list)
 		{
 			body += i.first + " " + i.second + "\n";
@@ -136,6 +162,7 @@ private:
 			return false;
 		}
 		file.close();
+		std::cout << "设置备份信息结束" << std::endl;
 		return true;
 	}
 	bool BackupDirListen(const std::string &path)
@@ -167,8 +194,10 @@ private:
 		std::string etag;
 		if (GetFileEtag(file, etag) == false)
 		{
+			std::cout << "获取etag失败" << std::endl;
 			return false;
 		}
+		std::cout << "添加备份信息" << std::endl;
 		_backup_list[file] = etag;
 		return true;
 	}
@@ -212,11 +241,19 @@ private:
 		for (int i = 0; i <= count; i++)
 		{
 			thr_list[i].join();
-			if (thr_res[i]._res == false)
-				return false;
-
+			if (thr_res[i]._res == true)
+			{
+				continue;
+			}
+			ret = false;
 		}
 		//5、上传成功添加备份信息
+		if (ret == false)
+		{
+			std::cout << "file: " << file << " backup false" << std::endl;
+			return false;
+		}
+		std::cout << "file: " << file << " backup success" << std::endl;
 		return true;
 	}
 
@@ -264,6 +301,7 @@ public:
 		{
 			BackupDirListen(CLIENT_BACKUP_DIR);
 			SetBackupInfo();
+			std::cout << std::endl;
 			Sleep(3000);
 		}
 		return true;
